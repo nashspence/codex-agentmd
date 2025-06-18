@@ -148,6 +148,6 @@
 ## VIII. Maintenance
 
 * Additionally, try to stay on top of these:
-  * **Refactor** non‑atomic code into feature folders.
+  * **Refactor** to isolate non‑atomic code into documented features in folders with tests.
   * **Migrate** mock‑heavy tests to integration tests—or document why mocks remain.
   * Keep both `Dockerfile` (release runtime) and `Dockerfile.devcontainer` (dev/test runtime) updated with all latest dependencies.
