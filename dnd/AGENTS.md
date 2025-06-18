@@ -3,7 +3,7 @@
 1. **Code Style**
 
    * Use language’s **strict** formatter/linter (PEP 8, gofmt, rustfmt, ESLint + Prettier).
-   * Humans use `check.sh` to run linters/formatters. Help maintain this file, but **do not run it**.
+   * Humans use `check.sh` to run linters/formatters in the dev container. Help maintain this file, but **do not run it**.
    * Agents use `agents-check.sh` to run linters/formatters. This version should also install all necessary dependencies for `agents-check.sh` to work. **Run `agents-check.sh` before every push and fix any problems**
 
 2. **Dependency Management**
