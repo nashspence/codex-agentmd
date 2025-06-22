@@ -6,6 +6,12 @@ Scheduled sync keeps your server responsive while new files are indexed at predi
 
 ---
 
+## Usage
+
+Provide a [cron expression](https://crontab.guru/) in the CRON_EXPRESSION environment variable to the container at startup using a docker-compose.yml file or similar.
+
+---
+
 ## Minimal `docker-compose.yml`
 
 ```yaml
