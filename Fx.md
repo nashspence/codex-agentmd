@@ -1,43 +1,91 @@
-# F1 "I want my home server to be available when I need it."
+# F1. “I want scheduled file-sync”
 
 ## Value
 
-This feature ensures that home-index not only adheres to a predictable and configurable sync schedule, but also guarantees meaningful progress and data availability when it matters most—aligning directly with your desire for your server to "be available when you need it." By interpreting the cron expression at startup, the daemon spaces sync events precisely to avoid overuse of system resources (P₁), ensures that a critical mass of indexing activity happens soon after startup (P₂), and confirms that tangible results (indexed file metadata) are eventually produced even if the server is stopped early (P₃). Altogether, this contract offers strong assurances of timely responsiveness, visible output, and efficient operation, so your server delivers reliable, ready-to-use file metadata when you interact with it—without wasting energy or leaving you uncertain about whether it's doing its job.
-
-## Specification
-
-### Vocabulary
-
-| Kind       | Syntax on the trace | Payload / meaning                                                                                                                                              |
-| ---------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **input**  | `SET_CRON(c)`       | user (or CI release script) sets the container-env var `CRON_EXPRESSION` to the cron string `c` **once, before start-up**. `c` must follow POSIX cron grammar. |
-| **input**  | `START`             | user launches the stack (e.g. `docker compose up -d`).                                                                                                         |
-| **output** | `LOG_SYNC(t)`       | the container writes a log line that *begins* with the **exact timestamp** `t ∈ ℝ₊` and contains the literal text `"start file sync"`.                         |
-| **output** | `FILES_READY`       | the directory `metadata/by-id` has become non-empty (first time only—later duplicates are ignored).                                                            |
-
-The trace is a finite or infinite time-ordered sequence
-`e₀ e₁ e₂ …`, each `eᵢ` chosen from the four event shapes above.
+Scheduled sync keeps your server responsive while new files are indexed at predictable times. Fresh metadata appears automatically—no manual triggers required.
 
 ---
 
-### Helper — deterministic interval function
+## Minimal `docker-compose.yml`
 
-```
-interval : CronString → ℝ₊
-interval("* * * * *")   = 60
-interval("*/2 * * * *") = 120
-…  (standard crontab semantics for any valid c)
+```yaml
+services:
+  home-index:
+    image: ghcr.io/nashspence/home-index:latest
+    environment:
+      - CRON_EXPRESSION=* * * * *        # every minute; edit to taste
+      - METADATA_DIRECTORY=/home-index/metadata
+    volumes:
+      - ./input:/files:ro                # place source files here (read-only)
+      - ./output:/home-index             # logs, metadata, appear here
+    depends_on:
+      - meilisearch
+
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    volumes:
+      - ./output/meili:/meili_data       # search index persists on host
 ```
 
 ---
 
-### Contract = P₁ ∧ P₂ ∧ P₃   (all formulas use continuous-time MTL)
+## User Testing
 
-Let **`I ≜ interval(c₀)`**, where `c₀` is the payload of the unique `SET_CRON`
-event in the trace.
+```bash
+# 0. (Optional) change cadence:
+#    edit CRON_EXPRESSION in docker-compose.yml, e.g.
+#    - CRON_EXPRESSION=*/5 * * * *      # every five minutes
 
-| Label                     | MTL formula                                                            | Natural-language reading                                                                                                                                                   |
-| ------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **P₁ spacing**            | `G( LOG_SYNC(t)  →  G_(0, I) ¬LOG_SYNC )`                              | *After every log-sync, no second log-sync appears for **strictly** `I` seconds.*                                                                                           |
-| **P₂ cadence & quantity** | `G( (¬SYNC_SEEN ∧ START)  →  F_[0, 3I+120]  (SYNC₁ ∧ SYNC₂ ∧ SYNC₃) )` | *From the instant the stack is started, at least three log-syncs arrive within `3 · I + 120 s`. (The helper predicates `SYNC₁ … SYNC₃` count distinct `LOG_SYNC` events.)* |
-| **P₃ artefacts**          | `G( STOP  →  F FILES_READY )`                                          | *Whenever the user stops the stack, the metadata directory eventually contains at least one file.*                                                                         |
+mkdir -p input output                    # create bind-mount folders
+
+# 1. Ensure there is at least ONE file to index
+echo "hello world" > input/hello.txt     # example seed file
+
+# 2. Launch the stack
+docker compose up -d                     # pull images & start services
+
+# 3. Watch it run
+tail -f output/files.log                 # see a new “start file sync” line each tick
+```
+
+**What you’ll see after the first tick**
+
+```
+output/
+├ files.log
+├ metadata/
+│   └ by-id/
+│       ├ <xxhash-of-hello.txt>/
+│       │   ├ document.json
+│       │   └ …                       ← any side-car artifacts
+│       └ …                           ← one folder per file hash in ./input
+└ meili/
+    └ …                               ← search index files
+```
+
+Change the cron schedule any time by editing the compose file and running:
+
+```bash
+docker compose up -d --force-recreate
+```
+
+The new cadence takes effect immediately; the rhythm in **`output/files.log`** updates accordingly.
+
+---
+
+## Input ↔ Output
+
+| **Your action**                       | **Observable result**                                                                                                                                                        |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Add / modify a file in `./input/`** | On the next tick a **directory named by that file’s xxhash** appears under **`./output/metadata/by-id/`** containing `document.json` and any other artifacts for that file. |
+| **Look at `./output/files.log`**      | One line per cron tick—e.g. `2025-06-22 14:00:00,012 start file sync`—spaced exactly as defined by `CRON_EXPRESSION`.                                                        |
+| **Run `docker compose stop`**         | Current tick finishes, a final log entry is written, containers halt; everything in **`./output/`** remains.                                                                 |
+| **Run `docker compose rm -fsv`**      | Containers & named volumes are removed, but the bind-mounted **`./output/`** directory stays on disk for inspection or backup.                                               |
+
+---
+
+## Acceptance
+
+1. **Cadence fidelity** Time between any two consecutive “start file sync” lines is **never shorter** than the cron interval you configured (verified ±1 s).
+2. **Clean slate per start** `./output/` is wiped and rebuilt on every container start, so logs & metadata always correspond to *that* run.
+3. **Proof of successful indexing** With at least one file in `./input/`, the first tick creates a directory under `./output/metadata/by-id/`, and MeiliSearch data persists in `./output/meili/`.
